@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SNR İLETİŞİM</title>
+<style>
+:root{--n:#0b1f3a;--n2:#16356a;--g:#14893f;--r:#c9323a;--bg:#eef2f7;--t:#14233a;--m:#5f6f86}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--t);padding-bottom:78px}
+header{background:var(--n);color:#fff;padding:14px 16px;font-weight:700;font-size:18px;position:sticky;top:0;z-index:5}
+main{padding:12px;max-width:720px;margin:auto}
+.card{background:#fff;border-radius:10px;padding:12px;margin-bottom:10px;border:1px solid #dbe3ee}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.k{font-size:12px;color:var(--m)}.v{font-size:18px;font-weight:700}
+.g{color:var(--g)}.r{color:var(--r)}
+button{background:var(--n2);color:#fff;border:0;border-radius:10px;padding:12px 14px;font-size:15px;min-height:48px}
+button.g2{background:var(--g)}button.r2{background:var(--r)}button.l{background:#dde5f0;color:var(--n)}
+button.s{min-height:36px;padding:6px 10px;font-size:13px}
+input,select,textarea{width:100%;padding:12px;border:1px solid #bcc8d8;border-radius:8px;font-size:16px;margin:4px 0 10px;background:#fff;color:var(--t)}
+label{font-size:13px;color:var(--m)}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--n);display:flex;padding-bottom:env(safe-area-inset-bottom)}
+nav a{flex:1;text-align:center;color:#9fb3d1;font-size:10px;padding:8px 0}
+nav a.on{color:#fff;background:var(--n2)}nav a b{display:block;font-size:18px;font-weight:400}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #e8edf4}
+.row:last-child{border:0}
+.bar{display:flex;gap:6px}.bar>div{flex:1;text-align:center;font-size:10px;color:var(--m)}
+.bar span{display:flex;align-items:flex-end;justify-content:center;gap:2px;height:70px}
+.bar i{width:10px;display:block;min-height:1px}
+#m{position:fixed;inset:0;background:#000a;display:none;align-items:flex-end;z-index:20}
+#m>div{background:#fff;width:100%;max-height:92vh;overflow:auto;padding:16px;border-radius:16px 16px 0 0}
+.warn{background:#fff4d6;border-color:#e6c36a}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+@media print{header,nav,button{display:none}}
+</style></head><body>
+<header>SNR İLETİŞİM</header>
+<main id="app"></main>
+<div id="m"></div>
+<nav>
+<a data-t="home" onclick="nav('home')"><b>⌂</b>Ana Sayfa</a>
+<a data-t="tx" onclick="nav('tx')"><b>₺</b>Gelir-Gider</a>
+<a data-t="ppl" onclick="nav('ppl')"><b>☰</b>Borç-Alacak</a>
+<a data-t="stk" onclick="nav('stk')"><b>▣</b>Stok</a>
+<a data-t="cash" onclick="nav('cash')"><b>◎</b>Kasa</a>
+<a data-t="rep" onclick="nav('rep')"><b>≣</b>Raporlar</a>
+<a data-t="set" onclick="nav('set')"><b>⚙</b>Ayarlar</a>
+</nav>
+<script>
+/* ===== SABİTLER ===== Tüm tutarlar KURUŞ (tam sayı) olarak saklanır. */
+const S=['tx','people','led','prod','mov','count','meta'];
+const CI=['Ürün satışları','Tahsilatlar','Kazı kazan komisyon / bayi payı','Diğer gelirler'];
+const CO=['Kira','Elektrik','Su','İnternet','Personel','Ürün alımı','İkramiye ödemesi','Diğer giderler'];
+const PC=['Kazı Kazan','Genel','Diğer'];
+let D={},tab='home',busy=false,P=null,F={q:'',cat:'',from:'',to:''},R={};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tl=v=>(v/100).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₺';
+const fi=v=>(v/100).toFixed(2).replace('.',',');
+const iso=(d=new Date())=>new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const dt=s=>s?s.split('-').reverse().join('.'):'';
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const sum=(a,f)=>a.reduce((s,x)=>s+f(x),0);
+/* "1.250,50" -> 125050 kuruş; geçersizse null */
+function money(s){s=String(s).trim().replace(/\./g,'').replace(',','.');return /^\d+(\.\d{1,2})?$/.test(s)?Math.round(parseFloat(s)*100):null}
+
+/* ===== VERİTABANI (IndexedDB) ===== */
+let db;
+const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open('snr_iletisim',1);
+ r.onupgradeneeded=()=>S.forEach(n=>r.result.createObjectStore(n,{keyPath:'id'}));
+ r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)});
+const all=n=>new Promise(r=>{const q=db.transaction(n).objectStore(n).getAll();q.onsuccess=()=>r(q.result)});
+/* items: [store,obj,silinecekMi]; hepsi TEK işlemde (atomik) yazılır */
+const put=items=>new Promise((res,rej)=>{
+ const t=db.transaction([...new Set(items.map(i=>i[0]))],'readwrite');
+ items.forEach(([n,o,d])=>d?t.objectStore(n).delete(o.id):t.objectStore(n).put(o));
+ t.oncomplete=res;t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)});
+const replaceAll=d=>new Promise((res,rej)=>{const t=db.transaction(S,'readwrite');
+ S.forEach(n=>{const s=t.objectStore(n);s.clear();d[n].forEach(o=>s.put(o))});
+ t.oncomplete=res;t.onerror=()=>rej(t.error)});
+async function load(){for(const n of S)D[n]=await all(n);
+ D.cfg=D.meta.find(x=>x.id=='cfg')||{id:'cfg',opening:0,lastBackup:null}}
+
+/* ===== HESAPLAMALAR ===== */
+const cash=()=>D.cfg.opening+sum(D.tx,x=>x.type=='in'?x.amt:-x.amt);
+function bal(pid){const L=D.led.filter(x=>x.pid==pid),f=k=>sum(L.filter(x=>x.kind==k),x=>x.amt);
+ const a=f('alacak')-f('tahsilat'),b=f('borc')-f('odeme');return{a,b,n:a-b}}
+const inRange=(x,a,b)=>(!a||x.date>=a)&&(!b||x.date<=b);
+
+/* ===== MODAL FORM ===== */
+function closeM(){$('#m').style.display='none';$('#m').innerHTML=''}
+function modal(title,fields,save){
+ $('#m').style.display='flex';
+ $('#m').innerHTML=`<div><h3>${title}</h3>${fields.map(f=>`<label>${f.l}</label>`+
+ (f.t=='sel'?`<select id="f_${f.k}">${f.o.map(o=>`<option ${o==f.v?'selected':''}>${esc(o)}</option>`).join('')}</select>`
+ :f.t=='area'?`<textarea id="f_${f.k}" rows="2">${esc(f.v)}</textarea>`
+ :`<input id="f_${f.k}" type="${f.t=='date'?'date':'text'}" ${f.t=='money'?'inputmode="decimal" placeholder="0,00"':''} ${f.t=='num'?'inputmode="numeric"':''} value="${esc(f.v)}">`)).join('')}
+ <div class="grid"><button class="l" onclick="closeM()">İptal</button><button id="sv">Kaydet</button></div></div>`;
+ $('#sv').onclick=async()=>{if(busy)return;const v={};
+  for(const f of fields){let x=$('#f_'+f.k).value.trim();
+   if(f.t=='money'){const m=money(x);if(m===null||(m<=0&&!f.zero))return alert(f.l+': geçerli ve sıfırdan büyük bir tutar girin (örn. 1.250,50)');x=m}
+   else if(f.t=='num'){if(!/^\d+$/.test(x)||(f.pos&&+x<1))return alert(f.l+': geçerli bir tam sayı girin');x=+x}
+   else if(f.req&&!x)return alert(f.l+' gerekli');
+   v[f.k]=x}
+  busy=true;$('#sv').disabled=true;
+  try{await save(v);closeM();await go()}catch(e){alert('Kaydedilemedi: '+e.message);$('#sv').disabled=false}finally{busy=false}}}
+
+/* ===== SAYFA YÖNETİMİ ===== */
+const pages={home:()=>home(),tx:()=>txPage(),ppl:()=>pplPage(),stk:()=>stkPage(),cash:()=>cashPage(),rep:()=>repPage(),set:()=>setPage()};
+async function go(){await load();$('#app').innerHTML=pages[tab]();
+ document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.t==tab))}
+function nav(t){tab=t;P=null;go();scrollTo(0,0)}
+const box=(k,v,c='')=>`<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`;
+const txRow=x=>`<div class="row"><div><b>${esc(x.desc)}</b><div class="k">${dt(x.date)} · ${esc(x.cat)}</div></div><div class="${x.type=='in'?'g':'r'}">${x.type=='in'?'+':'−'}${tl(x.amt)}</div></div>`;
+
+/* ===== ANA SAYFA ===== */
+function home(){
+ const t=iso(),T=D.tx.filter(x=>x.date==t),i=sum(T.filter(x=>x.type=='in'),x=>x.amt),o=sum(T.filter(x=>x.type=='out'),x=>x.amt);
+ let ar=0,bo=0;D.people.forEach(p=>{const b=bal(p.id);ar+=b.a;bo+=b.b});
+ const low=D.prod.filter(p=>p.qty<=p.min);
+ const days=[...Array(7)].map((_,k)=>{const d=new Date();d.setDate(d.getDate()-6+k);const s=iso(d),X=D.tx.filter(x=>x.date==s);
+  return{s,i:sum(X.filter(x=>x.type=='in'),x=>x.amt),o:sum(X.filter(x=>x.type=='out'),x=>x.amt)}});
+ const mx=Math.max(1,...days.map(d=>Math.max(d.i,d.o)));
+ const rec=[...D.tx].sort((a,b)=>b.ts-a.ts).slice(0,8);
+ return `<div class="grid">${box('Bugünkü gelir',tl(i),'g')}${box('Bugünkü gider',tl(o),'r')}
+ ${box('Günlük net kazanç',tl(i-o),i-o<0?'r':'g')}${box('Kasadaki para',tl(cash()),cash()<0?'r':'')}
+ ${box('Toplam alacak',tl(ar),'g')}${box('Toplam borç',tl(bo),'r')}
+ ${box('Stok değeri (alış)',tl(sum(D.prod,p=>p.qty*p.buy)))}${box('Bugünkü işlem sayısı',T.length)}</div>
+ <div class="grid" style="margin-bottom:10px"><button class="g2" onclick="txForm('in')">+ Gelir ekle</button><button class="r2" onclick="txForm('out')">− Gider ekle</button>
+ <button onclick="nav('stk')">Ürün sat / stok</button><button onclick="nav('cash')">Kasa say</button></div>
+ <div class="card"><b>Son 7 gün</b> <span class="k">(yeşil gelir, kırmızı gider)</span><div class="bar">${days.map(d=>`<div><span><i style="background:var(--g);height:${d.i/mx*100}%"></i><i style="background:var(--r);height:${d.o/mx*100}%"></i></span>${d.s.slice(8)}.${d.s.slice(5,7)}</div>`).join('')}</div></div>
+ ${low.length?`<div class="card warn"><b>Kritik stok</b>${low.map(p=>`<div class="row"><span>${esc(p.name)}</span><b>${p.qty} / min ${p.min}</b></div>`).join('')}</div>`:''}
+ <div class="card"><b>Son işlemler</b>${rec.length?rec.map(txRow).join(''):'<div class="k">Henüz işlem yok. Yukarıdan gelir veya gider ekleyin.</div>'}</div>`}
+
+/* ===== GELİR-GİDER ===== */
+function txForm(type,id){const old=id&&D.tx.find(x=>x.id==id);
+ modal((old?'İşlemi düzenle':type=='in'?'Yeni gelir':'Yeni gider'),[
+ {k:'amt',l:'Tutar (₺)',t:'money',v:old?fi(old.amt):''},{k:'date',l:'Tarih',t:'date',v:old?old.date:iso()},
+ {k:'cat',l:'Kategori',t:'sel',o:type=='in'?CI:CO,v:old?.cat},{k:'desc',l:'Açıklama',t:'text',req:1,v:old?.desc},
+ {k:'note',l:'Not (isteğe bağlı)',t:'area',v:old?.note}],
+ v=>put([['tx',old?{...old,...v}:{id:uid(),type,...v,src:'manual',ts:Date.now()}]]))}
+async function txDel(id){if(confirm('Bu işlem silinsin mi? Kasa bakiyesi güncellenecek.')){await put([['tx',{id},1]]);go()}}
+function txList(){
+ const q=F.q.toLowerCase(),L=D.tx.filter(x=>inRange(x,F.from,F.to)&&(!F.cat||x.cat==F.cat)&&(!q||(x.desc+x.note+x.cat).toLowerCase().includes(q))).sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts);
+ return L.length?L.map(x=>`<div class="card">${txRow(x)}${x.note?`<div class="k">${esc(x.note)}</div>`:''}<div class="acts">${x.src=='manual'?`<button class="s l" onclick="txForm('${x.type}','${x.id}')">Düzenle</button><button class="s r2" onclick="txDel('${x.id}')">Sil</button>`:'<span class="k">Otomatik kayıt (kaynağı olan bölümden değiştirilir)</span>'}</div></div>`).join(''):'<div class="k">Kayıt bulunamadı.</div>'}
+function setF(k,v){F[k]=v;$('#lst').innerHTML=txList()}
+function txPage(){
+ const t=iso(),w=iso(new Date(Date.now()-6*864e5)),m=t.slice(0,8)+'01',net=(a)=>{const X=D.tx.filter(x=>x.date>=a&&x.date<=t);return sum(X,x=>x.type=='in'?x.amt:-x.amt)};
+ return `<div class="grid"><button class="g2" onclick="txForm('in')">+ Gelir</button><button class="r2" onclick="txForm('out')">− Gider</button></div><br>
+ <div class="grid">${box('Bugün net',tl(net(t)),net(t)<0?'r':'g')}${box('Son 7 gün net',tl(net(w)),net(w)<0?'r':'g')}</div>
+ ${box('Bu ay net',tl(net(m)),net(m)<0?'r':'g')}
+ <div class="card"><input placeholder="Ara..." value="${esc(F.q)}" oninput="setF('q',this.value)">
+ <select onchange="setF('cat',this.value)"><option value="">Tüm kategoriler</option>${[...CI,...CO].map(c=>`<option ${F.cat==c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+ <div class="grid"><div><label>Başlangıç</label><input type="date" value="${F.from}" onchange="setF('from',this.value)"></div><div><label>Bitiş</label><input type="date" value="${F.to}" onchange="setF('to',this.value)"></div></div></div>
+ <div id="lst">${txList()}</div>`}
+
+/* ===== BORÇ-ALACAK ===== */
+function pplPage(){if(P)return pDetail();
+ return `<button onclick="pForm()" style="width:100%">+ Yeni kişi / işletme</button><br><br>
+ ${D.people.length?D.people.map(p=>{const b=bal(p.id);return `<div class="card" onclick="P='${p.id}';go()"><b>${esc(p.name)}</b><div class="k">${esc(p.phone)}</div>
+ <div class="row"><span>Kalan bakiye</span><b class="${b.n<0?'r':'g'}">${b.n<0?'Borcumuz ':'Alacağımız '}${tl(Math.abs(b.n))}</b></div></div>`}).join(''):'<div class="k">Kişi eklenmedi.</div>'}`}
+function pForm(){modal('Yeni kişi / işletme',[{k:'name',l:'Ad soyad / işletme adı',t:'text',req:1},{k:'phone',l:'Telefon',t:'text'},{k:'desc',l:'Açıklama',t:'text'}],
+ v=>put([['people',{id:uid(),...v}]]))}
+function pDetail(){const p=D.people.find(x=>x.id==P);if(!p){P=null;return pplPage()}const b=bal(P);
+ const L=D.led.filter(x=>x.pid==P).sort((a,c)=>c.date.localeCompare(a.date)||c.ts-a.ts);
+ const nm={alacak:'Alacak',borc:'Borç',tahsilat:'Tahsilat',odeme:'Ödeme'};
+ return `<button class="l s" onclick="P=null;go()">← Liste</button>
+ <div class="card"><b>${esc(p.name)}</b><div class="k">${esc(p.phone)} ${esc(p.desc)}</div>
+ <div class="grid"><div><div class="k">Toplam alacak (kalan)</div><div class="v g">${tl(b.a)}</div></div><div><div class="k">Toplam borç (kalan)</div><div class="v r">${tl(b.b)}</div></div></div>
+ <div class="row"><span>Net bakiye</span><b class="${b.n<0?'r':'g'}">${tl(b.n)}</b></div></div>
+ <div class="grid"><button class="g2" onclick="ledForm('alacak')">Alacak yaz</button><button class="r2" onclick="ledForm('borc')">Borç yaz</button>
+ <button class="g2" onclick="ledForm('tahsilat')">Ödeme al / tahsilat</button><button class="r2" onclick="ledForm('odeme')">Ödeme yap</button></div>
+ <p class="k">Borç veya alacağı kapatmak için ödeme ekranında tutar hazır gelir; onaylamanız yeterlidir.</p>
+ <div class="card"><b>Hesap ekstresi</b>${L.map(x=>`<div class="row"><div><b>${nm[x.kind]}</b> <span class="k">${dt(x.date)} ${esc(x.note)}</span></div>
+ <div><span class="${x.kind=='alacak'||x.kind=='odeme'?'g':'r'}">${tl(x.amt)}</span> <button class="s r2" onclick="ledDel('${x.id}')">Sil</button></div></div>`).join('')||'<div class="k">Hareket yok.</div>'}</div>
+ <button class="r2 s" onclick="pDel()">Kişiyi sil</button>`}
+function ledForm(kind){const p=D.people.find(x=>x.id==P),b=bal(P),lim={tahsilat:b.a,odeme:b.b}[kind];
+ const names={alacak:'Alacak kaydet',borc:'Borç kaydet',tahsilat:'Ödeme al (tahsilat)',odeme:'Ödeme yap'};
+ modal(names[kind],[{k:'amt',l:'Tutar (₺)'+(lim!==undefined?' – kalan '+tl(lim):''),t:'money',v:lim?fi(lim):''},{k:'date',l:'Tarih',t:'date',v:iso()},{k:'note',l:'Açıklama',t:'text'}],
+ v=>{if(lim!==undefined&&v.amt>lim)throw Error('Tutar kalan bakiyeyi aşıyor ('+tl(lim)+')');
+  const e={id:uid(),pid:P,kind,...v,ts:Date.now()},it=[['led',e]];
+  if(kind=='tahsilat'||kind=='odeme')it.push(['tx',{id:'tx_'+e.id,type:kind=='tahsilat'?'in':'out',amt:v.amt,date:v.date,desc:(kind=='tahsilat'?'Tahsilat: ':'Ödeme: ')+p.name,cat:kind=='tahsilat'?'Tahsilatlar':'Diğer giderler',note:v.note,src:'led',ts:e.ts}]);
+  return put(it)})}
+async function ledDel(id){const e=D.led.find(x=>x.id==id);
+ const rest=D.led.filter(x=>x.pid==P&&x.id!=id),f=k=>sum(rest.filter(x=>x.kind==k),x=>x.amt);
+ if(f('alacak')<f('tahsilat')||f('borc')<f('odeme'))return alert('Bu kayıt silinirse ödemeler borç/alacağı aşar. Önce ilgili ödemeyi silin.');
+ if(confirm('Hareket silinsin mi? Kasaya yansıyan ödeme varsa o da kaldırılır.')){await put([['led',e,1],['tx',{id:'tx_'+id},1]]);go()}}
+async function pDel(){if(!confirm('Kişi ve tüm hareketleri silinsin mi?'))return;
+ const it=[['people',{id:P},1]];D.led.filter(x=>x.pid==P).forEach(x=>{it.push(['led',x,1],['tx',{id:'tx_'+x.id},1])});await put(it);P=null;go()}
+
+/* ===== STOK ===== */
+function prForm(id){const o=id&&D.prod.find(x=>x.id==id);
+ modal(o?'Ürünü düzenle':'Yeni ürün',[{k:'name',l:'Ürün adı',t:'text',req:1,v:o?.name},{k:'cat',l:'Kategori',t:'sel',o:PC,v:o?.cat},{k:'code',l:'Ürün kodu',t:'text',v:o?.code},
+ {k:'buy',l:'Alış fiyatı (₺)',t:'money',zero:1,v:o?fi(o.buy):''},{k:'sell',l:'Satış fiyatı (₺)',t:'money',zero:1,v:o?fi(o.sell):''},
+ ...(o?[]:[{k:'qty',l:'Mevcut stok',t:'num',v:'0'}]),{k:'min',l:'Minimum stok uyarısı',t:'num',v:o?o.min:'5'},{k:'desc',l:'Açıklama',t:'text',v:o?.desc}],
+ v=>{if(o)return put([['prod',{...o,...v}]]);const p={id:uid(),...v},it=[['prod',p]];
+  if(p.qty>0)it.push(['mov',{id:uid(),pid:p.id,type:'giris',qty:p.qty,after:p.qty,ts:Date.now(),note:'Açılış stoku'}]);return put(it)})}
+function stkOp(id,type){const p=D.prod.find(x=>x.id==id),T={sat:'Ürün satışı',gir:'Stok girişi',cik:'Stok çıkışı',duz:'Stok düzeltme'}[type];
+ const f=type=='duz'?[{k:'qty',l:'Sayım sonucu (yeni miktar)',t:'num',v:p.qty}]:[{k:'qty',l:'Adet (mevcut '+p.qty+')',t:'num',pos:1}];
+ if(type=='gir')f.push({k:'exp',l:'Alış tutarı kasaya gider yazılsın mı?',t:'sel',o:['Evet','Hayır']});
+ f.push({k:'note',l:'Not',t:'text'});
+ modal(T+': '+esc(p.name),f,v=>{let nq=p.qty;
+  if(type=='sat'||type=='cik'){if(v.qty>p.qty)throw Error('Stok yetersiz (mevcut '+p.qty+')');nq=p.qty-v.qty}
+  else if(type=='gir')nq=p.qty+v.qty;else nq=v.qty;
+  const m={id:uid(),pid:id,type,qty:nq-p.qty,after:nq,ts:Date.now(),note:v.note},it=[['prod',{...p,qty:nq}],['mov',m]];
+  if(type=='sat'&&p.sell>0)it.push(['tx',{id:'tx_'+m.id,type:'in',amt:v.qty*p.sell,date:iso(),desc:'Satış: '+p.name+' x'+v.qty,cat:'Ürün satışları',note:'',src:'stk',ts:m.ts}]);
+  if(type=='gir'&&v.exp=='Evet'&&p.buy>0)it.push(['tx',{id:'tx_'+m.id,type:'out',amt:v.qty*p.buy,date:iso(),desc:'Alım: '+p.name+' x'+v.qty,cat:'Ürün alımı',note:'',src:'stk',ts:m.ts}]);
+  return put(it)})}
+function hist(id){const p=D.prod.find(x=>x.id==id),L=D.mov.filter(x=>x.pid==id).sort((a,b)=>b.ts-a.ts),n={sat:'Satış',gir:'Giriş',cik:'Çıkış',duz:'Düzeltme',giris:'Giriş'};
+ $('#m').style.display='flex';$('#m').innerHTML=`<div><h3>${esc(p.name)} – hareketler</h3>${L.map(x=>{const d=new Date(x.ts);return `<div class="row"><div><b>${n[x.type]}</b> ${esc(x.note)}<div class="k">${dt(iso(d))} ${d.toTimeString().slice(0,5)}</div></div><div>${x.qty>0?'+':''}${x.qty} → ${x.after}</div></div>`}).join('')||'Hareket yok'}<br><button class="l" style="width:100%" onclick="closeM()">Kapat</button></div>`}
+async function prDel(id){if(confirm('Ürün ve stok hareketleri silinsin mi? (Kasa kayıtları korunur)')){await put([['prod',{id},1],...D.mov.filter(x=>x.pid==id).map(x=>['mov',x,1])]);go()}}
+function stkPage(){
+ return `<button style="width:100%" onclick="prForm()">+ Yeni ürün</button><br>
+ <div class="grid" style="margin-top:10px">${box('Stok değeri (alış)',tl(sum(D.prod,p=>p.qty*p.buy)))}${box('Tahmini kâr (satılırsa)',tl(sum(D.prod,p=>p.qty*(p.sell-p.buy))),'g')}</div>
+ <p class="k">Tahmini kâr gerçekleşmiş gelir değildir; kasaya yansımaz. Kazı kazan ikramiye ve komisyon kayıtları Gelir-Gider'de ayrı kategorilerdedir.</p>
+ ${D.prod.map(p=>`<div class="card ${p.qty<=p.min?'warn':''}"><b>${esc(p.name)}</b> <span class="k">${esc(p.cat)} ${esc(p.code)}</span>
+ <div class="grid"><div><div class="k">Stok ${p.qty<=p.min?'(kritik)':''}</div><div class="v">${p.qty}</div></div><div><div class="k">Birim kâr</div><div class="v ${p.sell-p.buy<0?'r':'g'}">${tl(p.sell-p.buy)}</div></div></div>
+ <div class="k">Alış ${tl(p.buy)} · Satış ${tl(p.sell)} · Min ${p.min}</div>
+ <div class="acts"><button class="s g2" onclick="stkOp('${p.id}','sat')">Sat</button><button class="s" onclick="stkOp('${p.id}','gir')">Giriş</button><button class="s" onclick="stkOp('${p.id}','cik')">Çıkış</button><button class="s l" onclick="stkOp('${p.id}','duz')">Düzelt</button><button class="s l" onclick="hist('${p.id}')">Geçmiş</button><button class="s l" onclick="prForm('${p.id}')">Düzenle</button><button class="s r2" onclick="prDel('${p.id}')">Sil</button></div></div>`).join('')||'<div class="k">Ürün yok.</div>'}`}
+
+/* ===== KASA ===== */
+function cashPage(){const c=cash(),H=[...D.count].sort((a,b)=>b.ts-a.ts);
+ return `${box('Beklenen kasa (açılış + girişler − çıkışlar)',tl(c),c<0?'r':'')}
+ <div class="grid"><button onclick="cashCount()">Kasa say</button><button class="l" onclick="openForm()">Açılış bakiyesi: ${tl(D.cfg.opening)}</button></div>
+ <div class="grid" style="margin-top:10px">${box('Toplam nakit giriş',tl(sum(D.tx.filter(x=>x.type=='in'),x=>x.amt)),'g')}${box('Toplam nakit çıkış',tl(sum(D.tx.filter(x=>x.type=='out'),x=>x.amt)),'r')}</div>
+ <div class="card"><b>Kasa sayım geçmişi</b>${H.map(x=>`<div class="row"><div>${dt(x.date)}<div class="k">Beklenen ${tl(x.expected)} · Sayılan ${tl(x.counted)}</div></div><b class="${x.diff<0?'r':x.diff>0?'g':''}">${x.diff>0?'+':''}${tl(x.diff)}</b></div>`).join('')||'<div class="k">Henüz sayım yok.</div>'}</div>`}
+function openForm(){modal('Açılış bakiyesi',[{k:'amt',l:'Kasadaki başlangıç parası (₺)',t:'money',zero:1,v:fi(D.cfg.opening)}],v=>put([['meta',{...D.cfg,opening:v.amt}]]))}
+function cashCount(){const c=cash();modal('Kasa sayımı',[{k:'amt',l:'Sayılan nakit (₺) – beklenen '+tl(c),t:'money',zero:1}],
+ v=>put([['count',{id:uid(),date:iso(),ts:Date.now(),expected:c,counted:v.amt,diff:v.amt-c}]]))}
+
+/* ===== RAPORLAR ===== */
+function repPage(){const t=iso();if(!R.from){R.from=t.slice(0,8)+'01';R.to=t}
+ const T=D.tx.filter(x=>inRange(x,R.from,R.to)),I=T.filter(x=>x.type=='in'),O=T.filter(x=>x.type=='out'),i=sum(I,x=>x.amt),o=sum(O,x=>x.amt);
+ const by=(a)=>{const m={};a.forEach(x=>m[x.cat]=(m[x.cat]||0)+x.amt);return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${tl(v)}</b></div>`).join('')||'<div class="k">—</div>'};
+ const sales={};D.mov.filter(x=>x.type=='sat'&&inRange({date:iso(new Date(x.ts))},R.from,R.to)).forEach(x=>sales[x.pid]=(sales[x.pid]||0)-x.qty);
+ let ar=0,bo=0;D.people.forEach(p=>{const b=bal(p.id);ar+=b.a;bo+=b.b});
+ return `<div class="card"><div class="grid"><div><label>Başlangıç</label><input type="date" value="${R.from}" onchange="R.from=this.value;go()"></div><div><label>Bitiş</label><input type="date" value="${R.to}" onchange="R.to=this.value;go()"></div></div>
+ <div class="grid"><button class="s" onclick="csv()">Excel (CSV) aktar</button><button class="s l" onclick="print()">PDF / Yazdır</button></div></div>
+ <div class="grid">${box('Gelir',tl(i),'g')}${box('Gider',tl(o),'r')}</div>${box('Kâr-zarar (gelir − gider)',tl(i-o),i-o<0?'r':'g')}
+ <div class="card"><b>Gelir kategorileri</b>${by(I)}</div><div class="card"><b>Gider kategorileri</b>${by(O)}</div>
+ <div class="card"><b>Ürün satışı (adet)</b>${Object.entries(sales).map(([id,q])=>`<div class="row"><span>${esc(D.prod.find(p=>p.id==id)?.name||'Silinmiş ürün')}</span><b>${q}</b></div>`).join('')||'<div class="k">—</div>'}</div>
+ <div class="card"><b>Stok raporu</b>${D.prod.map(p=>`<div class="row"><span>${esc(p.name)} (${p.qty})</span><b>${tl(p.qty*p.buy)}</b></div>`).join('')||'<div class="k">—</div>'}</div>
+ <div class="card"><b>Borç-alacak</b><div class="row"><span>Toplam alacak</span><b class="g">${tl(ar)}</b></div><div class="row"><span>Toplam borç</span><b class="r">${tl(bo)}</b></div></div>`}
+function dl(name,txt,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
+function csv(){const q=s=>'"'+String(s||'').replace(/"/g,'""')+'"';
+ const rows=D.tx.filter(x=>inRange(x,R.from,R.to)).sort((a,b)=>a.date.localeCompare(b.date)).map(x=>[dt(x.date),x.type=='in'?'Gelir':'Gider',q(x.cat),q(x.desc),fi(x.amt)].join(';'));
+ dl('rapor_'+R.from+'_'+R.to+'.csv','\ufeffTarih;Tür;Kategori;Açıklama;Tutar\n'+rows.join('\n'),'text/csv')}
+
+/* ===== AYARLAR / YEDEK ===== */
+function setPage(){const lb=D.cfg.lastBackup;
+ return `<div class="card"><b>Yedekleme</b><p class="k">Son yedek: ${lb?new Date(lb).toLocaleString('tr-TR'):'Hiç yedek alınmadı'}</p>
+ <button style="width:100%" onclick="backup()">Yedek al (JSON)</button></div>
+ <div class="card"><b>Yedekten geri yükle</b><p class="k">Dosya doğrulanır, onay istenir ve geri yüklemeden önce mevcut verinizin yedeği otomatik indirilir.</p>
+ <input type="file" accept=".json,application/json" onchange="restore(this)"></div>
+ <p class="k">Veriler yalnızca bu cihazda saklanır. Düzenli yedek almanız önerilir.</p>`}
+async function backup(){const data={};S.forEach(n=>data[n]=D[n]);
+ dl('snr_yedek_'+iso()+'.json',JSON.stringify({app:'SNR',v:1,date:new Date().toISOString(),data}),'application/json');
+ await put([['meta',{...D.cfg,lastBackup:new Date().toISOString()}]]);await go()}
+function restore(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();
+ r.onload=async()=>{try{const o=JSON.parse(r.result);
+  if(o.app!='SNR'||!S.every(n=>Array.isArray(o.data?.[n]))||!o.data.tx.every(x=>x.id&&Number.isInteger(x.amt)))throw 0;
+  if(!confirm('Yedek tarihi: '+new Date(o.date).toLocaleString('tr-TR')+'\nMevcut TÜM veriler bu yedekle değiştirilecek. Önce şu anki verinin yedeği indirilecek. Devam edilsin mi?'))return;
+  await backup();await replaceAll(o.data);alert('Yedek geri yüklendi.');await go()}catch(e){alert('Geçersiz veya bozuk yedek dosyası. Mevcut verilere dokunulmadı.')}};
+ r.readAsText(f);inp.value=''}
+
+openDB().then(()=>{navigator.storage?.persist?.();go()}).catch(e=>{$('#app').innerHTML='<div class="card r">Veritabanı açılamadı: '+esc(e.message)+'</div>'});
+</script></body></html>
